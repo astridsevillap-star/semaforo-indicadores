@@ -31,50 +31,74 @@ const allowedOrigins = new Set([
   'https://portal-nogasa-astridsevillap-star-s.vercel.app'
 ]);
 let completed = false;
+let accepting = false;
 
-async function openDashboard(){
+function openDashboard(){
   if(completed) return;
   completed = true;
-  location.replace('/index.html');
+  location.replace('/index.html?from=portal');
 }
 
 async function acceptPortalSession(event){
-  if(!event.data || event.data.type !== 'nogasa-auth-session') return;
+  if(event.source !== window.parent) return;
   if(!allowedOrigins.has(event.origin)) return;
+  if(!event.data || event.data.type !== 'nogasa-auth-session') return;
+  if(accepting || completed) return;
+
   const accessToken = event.data.accessToken;
   const refreshToken = event.data.refreshToken;
   if(!accessToken || !refreshToken) return;
 
+  accepting = true;
   statusEl.textContent = 'Conectando con tu sesión del portal…';
+
   const { error } = await supabase.auth.setSession({
     access_token: accessToken,
     refresh_token: refreshToken
   });
+
   if(error){
-    statusEl.textContent = 'No se pudo transferir la sesión. Reintentando…';
+    accepting = false;
+    statusEl.textContent = 'Reintentando acceso desde el portal…';
     window.parent.postMessage({ type:'nogasa-auth-request' }, event.origin);
     return;
   }
 
-  const { data } = await supabase.auth.getUser();
-  if(data.user) await openDashboard();
+  const { data, error: userError } = await supabase.auth.getUser();
+  if(!userError && data.user){
+    statusEl.textContent = 'Acceso validado. Abriendo indicadores…';
+    openDashboard();
+    return;
+  }
+
+  accepting = false;
+  statusEl.textContent = 'Revalidando tu sesión del portal…';
+  window.parent.postMessage({ type:'nogasa-auth-request' }, event.origin);
 }
 
 window.addEventListener('message', acceptPortalSession);
 
-const { data:{ session } } = await supabase.auth.getSession();
-if(session){
-  await openDashboard();
-} else if(embedded){
+if(embedded){
+  // Dentro del Portal siempre prevalece la sesión actual del Portal.
+  // No confiamos en sesiones locales anteriores del tablero, porque pueden
+  // estar vencidas o pertenecer a un acceso independiente previo.
   window.parent.postMessage({ type:'nogasa-auth-request' }, '*');
+
   setTimeout(() => {
-    if(!completed){
+    if(!completed && !accepting){
+      statusEl.textContent = 'Esperando la sesión del Portal Nogasa…';
+      window.parent.postMessage({ type:'nogasa-auth-request' }, '*');
+    }
+  }, 1800);
+
+  setTimeout(() => {
+    if(!completed && !accepting){
       statusEl.textContent = 'No se recibió la sesión del portal. Actualiza el Portal Nogasa e inténtalo nuevamente.';
     }
-  }, 5000);
+  }, 6500);
 } else {
-  // Acceso directo: conserva el login propio existente del tablero.
-  await openDashboard();
+  // Acceso directo: mantiene el login propio existente del tablero.
+  openDashboard();
 }
 </script>
 </body>
