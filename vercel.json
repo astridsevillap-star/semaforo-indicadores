@@ -1,8 +1,7 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/semaforo_indicadores%20%283%29%20%281%29.html" },
-    { "source": "/index.html", "destination": "/semaforo_indicadores%20%283%29%20%281%29.html" },
-    { "source": "/bridge.html", "destination": "/semaforo_indicadores%20%283%29%20%281%29.html" },
-    { "source": "/bridge", "destination": "/semaforo_indicadores%20%283%29%20%281%29.html" }
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/bridge.html", "destination": "/index.html" },
+    { "source": "/bridge", "destination": "/index.html" }
   ]
 }
