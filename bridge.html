@@ -48,24 +48,58 @@ const allowedOrigins = new Set([
 let dashboardOpened = false;
 let accepting = false;
 
-function showDashboard(){
+function escapeSessionForScript(session){
+  return JSON.stringify(session)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
+async function openDashboardWithSession(accessToken, refreshToken){
   if(dashboardOpened) return;
   dashboardOpened = true;
   statusEl.textContent = 'Acceso validado. Abriendo indicadores…';
 
-  dashboardFrame.addEventListener('load', () => {
-    gateEl.classList.add('hidden');
-    dashboardFrame.classList.add('visible');
-  }, { once:true });
+  try{
+    const response = await fetch('/index.html', { cache:'no-store' });
+    if(!response.ok) throw new Error('No se pudo cargar el tablero (' + response.status + ')');
 
-  // El tablero se carga después de que Supabase confirmó y persistió la sesión
-  // en este mismo origen. Así index.html reutiliza exactamente la sesión del Portal.
-  dashboardFrame.src = '/index.html?from=portal';
+    let html = await response.text();
+    const originalStart = `(async function start(){\n  const { data: authData } = await supabase.auth.getUser();\n  if(!authData.user) return;\n  document.getElementById('auth-gate').style.display = 'none';\n  startDashboard();\n})();`;
+
+    const portalSession = escapeSessionForScript({
+      access_token: accessToken,
+      refresh_token: refreshToken
+    });
+
+    const portalStart = `(async function start(){\n  const portalSession = ${portalSession};\n  const { error: portalSessionError } = await supabase.auth.setSession(portalSession);\n  if(portalSessionError){\n    console.error('No se pudo aplicar la sesión del Portal Nogasa:', portalSessionError);\n    return;\n  }\n  const { data: authData, error: authError } = await supabase.auth.getUser();\n  if(authError || !authData.user){\n    console.error('La sesión del Portal Nogasa no pudo validarse en Indicadores:', authError);\n    return;\n  }\n  document.getElementById('auth-gate').style.display = 'none';\n  startDashboard();\n})();`;
+
+    if(!html.includes(originalStart)){
+      throw new Error('No se encontró el bloque de inicio de autenticación del tablero.');
+    }
+
+    html = html.replace(originalStart, portalStart);
+    html = html.replace('<head>', '<head>\n<base href="/">');
+
+    dashboardFrame.addEventListener('load', () => {
+      gateEl.classList.add('hidden');
+      dashboardFrame.classList.add('visible');
+    }, { once:true });
+
+    dashboardFrame.srcdoc = html;
+  }catch(error){
+    dashboardOpened = false;
+    console.error(error);
+    statusEl.textContent = 'No se pudo abrir Indicadores con la sesión del Portal. Vuelve al panel principal y reintenta.';
+  }
 }
 
-async function validateStoredSession(){
-  const { data: sessionData } = await supabase.auth.getSession();
-  if(!sessionData?.session) return false;
+async function validatePortalSession(accessToken, refreshToken){
+  const { data: sessionData, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken
+  });
+  if(error || !sessionData?.session) return false;
 
   const { data: userData, error: userError } = await supabase.auth.getUser();
   return !userError && !!userData?.user;
@@ -75,7 +109,7 @@ async function acceptPortalSession(event){
   if(event.source !== window.parent) return;
   if(!allowedOrigins.has(event.origin)) return;
   if(!event.data || event.data.type !== 'nogasa-auth-session') return;
-  if(accepting) return;
+  if(accepting || dashboardOpened) return;
 
   const accessToken = event.data.accessToken || event.data.access_token;
   const refreshToken = event.data.refreshToken || event.data.refresh_token;
@@ -84,33 +118,20 @@ async function acceptPortalSession(event){
   accepting = true;
   statusEl.textContent = 'Conectando con tu sesión del portal…';
 
-  const { data: sessionData, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken
-  });
-
-  if(error || !sessionData?.session){
+  const valid = await validatePortalSession(accessToken, refreshToken);
+  if(!valid){
     accepting = false;
     statusEl.textContent = 'Reintentando acceso desde el portal…';
     window.parent.postMessage({ type:'nogasa-auth-request' }, event.origin);
     return;
   }
 
-  const valid = await validateStoredSession();
-  if(valid){
-    showDashboard();
-    return;
-  }
-
-  accepting = false;
-  statusEl.textContent = 'Revalidando tu sesión del portal…';
-  window.parent.postMessage({ type:'nogasa-auth-request' }, event.origin);
+  await openDashboardWithSession(accessToken, refreshToken);
 }
 
 window.addEventListener('message', acceptPortalSession);
 
 if(embedded){
-  // El Portal responde a esta solicitud enviando nogasa-auth-session.
   window.parent.postMessage({ type:'nogasa-auth-request' }, '*');
 
   setTimeout(() => {
@@ -126,7 +147,6 @@ if(embedded){
     }
   }, 6500);
 } else {
-  // El acceso directo conserva el login propio actual del tablero.
   window.location.replace('/index.html');
 }
 </script>
