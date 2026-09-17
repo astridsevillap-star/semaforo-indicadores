@@ -5,150 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Indicadores · Nogasa</title>
 <style>
-  :root{--navy:#1c2b4a;--red:#c0392b;--muted:#6b7688;--border:#dfe3ea}
-  *{box-sizing:border-box}
-  html,body{margin:0;width:100%;height:100%;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--navy)}
-  body{overflow:hidden}
-  .gate{position:fixed;inset:0;display:grid;place-items:center;padding:20px;background:#f6f7f9;z-index:2}
-  .gate.hidden{display:none}
-  .card{width:min(420px,calc(100% - 40px));padding:30px;border:1px solid var(--border);border-radius:14px;background:#fff;box-shadow:0 18px 45px rgba(28,43,74,.12);text-align:center}
-  .mark{width:34px;height:34px;margin:0 auto 16px;border-radius:8px;background:var(--red)}
-  h1{margin:0 0 8px;font-size:24px}
-  p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
-  #dashboardFrame{display:none;width:100%;height:100%;border:0;background:#f6f7f9}
-  #dashboardFrame.visible{display:block}
+  html,body{margin:0;width:100%;height:100%;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#1c2b4a}
+  body{display:grid;place-items:center}
+  .loading{font-size:14px;color:#6b7688}
 </style>
 </head>
 <body>
-<div class="gate" id="gate">
-  <div class="card">
-    <div class="mark"></div>
-    <h1>Tablero de Indicadores</h1>
-    <p id="status">Validando acceso del Portal Nogasa…</p>
-  </div>
-</div>
-<iframe id="dashboardFrame" title="Tablero de Indicadores"></iframe>
-
-<script type="module">
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-const supabase = createClient(
-  'https://shgnuihnxoahsvrnntfq.supabase.co',
-  'sb_publishable_TGNnuqnajrAZ6m2_XyklzA_LqZoVKrS'
-);
-
-const statusEl = document.getElementById('status');
-const gateEl = document.getElementById('gate');
-const dashboardFrame = document.getElementById('dashboardFrame');
-const embedded = window.parent !== window;
-const allowedOrigins = new Set([
-  'https://portal-nogasa.vercel.app',
-  'https://portal-nogasa-astridsevillap-star-s.vercel.app'
-]);
-let dashboardOpened = false;
-let accepting = false;
-
-function escapeSessionForScript(session){
-  return JSON.stringify(session)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
-}
-
-async function openDashboardWithSession(accessToken, refreshToken){
-  if(dashboardOpened) return;
-  dashboardOpened = true;
-  statusEl.textContent = 'Acceso validado. Abriendo indicadores…';
-
+<div class="loading" id="loading">Abriendo tablero de Indicadores…</div>
+<script>
+(async function(){
   try{
-    const response = await fetch('/index.html', { cache:'no-store' });
+    const response = await fetch('/index.html?public=1', { cache:'no-store' });
     if(!response.ok) throw new Error('No se pudo cargar el tablero (' + response.status + ')');
 
     let html = await response.text();
+
     const originalStart = `(async function start(){\n  const { data: authData } = await supabase.auth.getUser();\n  if(!authData.user) return;\n  document.getElementById('auth-gate').style.display = 'none';\n  startDashboard();\n})();`;
 
-    const portalSession = escapeSessionForScript({
-      access_token: accessToken,
-      refresh_token: refreshToken
-    });
-
-    const portalStart = `(async function start(){\n  const portalSession = ${portalSession};\n  const { error: portalSessionError } = await supabase.auth.setSession(portalSession);\n  if(portalSessionError){\n    console.error('No se pudo aplicar la sesión del Portal Nogasa:', portalSessionError);\n    return;\n  }\n  const { data: authData, error: authError } = await supabase.auth.getUser();\n  if(authError || !authData.user){\n    console.error('La sesión del Portal Nogasa no pudo validarse en Indicadores:', authError);\n    return;\n  }\n  document.getElementById('auth-gate').style.display = 'none';\n  startDashboard();\n})();`;
+    const directStart = `(async function start(){\n  document.getElementById('auth-gate').style.display = 'none';\n  await startDashboard();\n})();`;
 
     if(!html.includes(originalStart)){
-      throw new Error('No se encontró el bloque de inicio de autenticación del tablero.');
+      throw new Error('No se encontró el bloque de inicio del tablero.');
     }
 
-    html = html.replace(originalStart, portalStart);
-    html = html.replace('<head>', '<head>\n<base href="/">');
+    html = html.replace(originalStart, directStart);
+    html = html.replace('<head>', '<head>\n<base href="/">\n<style>#auth-gate{display:none!important}</style>');
 
-    dashboardFrame.addEventListener('load', () => {
-      gateEl.classList.add('hidden');
-      dashboardFrame.classList.add('visible');
-    }, { once:true });
-
-    dashboardFrame.srcdoc = html;
+    document.open();
+    document.write(html);
+    document.close();
   }catch(error){
-    dashboardOpened = false;
     console.error(error);
-    statusEl.textContent = 'No se pudo abrir Indicadores con la sesión del Portal. Vuelve al panel principal y reintenta.';
+    document.getElementById('loading').textContent = 'No se pudo abrir el tablero. Actualiza la página e inténtalo nuevamente.';
   }
-}
-
-async function validatePortalSession(accessToken, refreshToken){
-  const { data: sessionData, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken
-  });
-  if(error || !sessionData?.session) return false;
-
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  return !userError && !!userData?.user;
-}
-
-async function acceptPortalSession(event){
-  if(event.source !== window.parent) return;
-  if(!allowedOrigins.has(event.origin)) return;
-  if(!event.data || event.data.type !== 'nogasa-auth-session') return;
-  if(accepting || dashboardOpened) return;
-
-  const accessToken = event.data.accessToken || event.data.access_token;
-  const refreshToken = event.data.refreshToken || event.data.refresh_token;
-  if(!accessToken || !refreshToken) return;
-
-  accepting = true;
-  statusEl.textContent = 'Conectando con tu sesión del portal…';
-
-  const valid = await validatePortalSession(accessToken, refreshToken);
-  if(!valid){
-    accepting = false;
-    statusEl.textContent = 'Reintentando acceso desde el portal…';
-    window.parent.postMessage({ type:'nogasa-auth-request' }, event.origin);
-    return;
-  }
-
-  await openDashboardWithSession(accessToken, refreshToken);
-}
-
-window.addEventListener('message', acceptPortalSession);
-
-if(embedded){
-  window.parent.postMessage({ type:'nogasa-auth-request' }, '*');
-
-  setTimeout(() => {
-    if(!dashboardOpened && !accepting){
-      statusEl.textContent = 'Esperando la sesión del Portal Nogasa…';
-      window.parent.postMessage({ type:'nogasa-auth-request' }, '*');
-    }
-  }, 1200);
-
-  setTimeout(() => {
-    if(!dashboardOpened && !accepting){
-      statusEl.textContent = 'No se recibió la sesión del portal. Regresa al panel principal y vuelve a abrir Indicadores.';
-    }
-  }, 6500);
-} else {
-  window.location.replace('/index.html');
-}
+})();
 </script>
 </body>
 </html>
