@@ -1,6 +1,8 @@
 {
   "rewrites": [
     { "source": "/", "destination": "/semaforo_indicadores (3) (1).html" },
-    { "source": "/index.html", "destination": "/semaforo_indicadores (3) (1).html" }
+    { "source": "/index.html", "destination": "/semaforo_indicadores (3) (1).html" },
+    { "source": "/bridge.html", "destination": "/semaforo_indicadores (3) (1).html" },
+    { "source": "/bridge", "destination": "/semaforo_indicadores (3) (1).html" }
   ]
 }
