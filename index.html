@@ -77,6 +77,79 @@
       throw new Error('Operación de almacenamiento no soportada');
     };
 
+    function installAdminControls(frame){
+      const doc = frame.contentDocument;
+      const win = frame.contentWindow;
+      if(!doc || !doc.body) return;
+
+      const adminOption = doc.querySelector('.profile-option-btn.is-admin');
+      if(adminOption) adminOption.textContent = 'Modo edición — Administrador';
+
+      if(!doc.getElementById('nogasa-admin-save-style')){
+        const style = doc.createElement('style');
+        style.id = 'nogasa-admin-save-style';
+        style.textContent = `
+          #nogasa-cloud-save{position:fixed;right:18px;bottom:18px;z-index:99999;display:none;align-items:center;gap:8px;background:#fff;border:1px solid #dfe3ea;border-radius:10px;padding:8px 10px;box-shadow:0 10px 28px rgba(28,43,74,.18)}
+          #nogasa-cloud-save button{border:0;border-radius:7px;background:#1f5fa8;color:#fff;padding:10px 14px;font-weight:800;cursor:pointer}
+          #nogasa-cloud-save button:disabled{opacity:.6;cursor:wait}
+          #nogasa-cloud-save span{font-size:12px;color:#6b7688;font-weight:700}
+        `;
+        doc.head.appendChild(style);
+      }
+
+      let controls = doc.getElementById('nogasa-cloud-save');
+      if(!controls){
+        controls = doc.createElement('div');
+        controls.id = 'nogasa-cloud-save';
+
+        const btn = doc.createElement('button');
+        btn.id = 'nogasa-save-now';
+        btn.type = 'button';
+        btn.textContent = 'Guardar cambios';
+
+        const state = doc.createElement('span');
+        state.id = 'nogasa-save-state';
+        state.textContent = 'Guardado compartido';
+
+        controls.appendChild(btn);
+        controls.appendChild(state);
+        doc.body.appendChild(controls);
+
+        btn.addEventListener('click', async function(){
+          btn.disabled = true;
+          state.textContent = 'Guardando…';
+          try{
+            if(typeof win.persist !== 'function') throw new Error('El tablero todavía no terminó de cargar');
+            await win.persist();
+            state.textContent = 'Guardado';
+            setTimeout(function(){ state.textContent = 'Guardado compartido'; }, 1800);
+          }catch(error){
+            console.error(error);
+            state.textContent = 'No se pudo guardar';
+          }finally{
+            btn.disabled = false;
+          }
+        });
+      }
+
+      function refreshAdminMode(){
+        const label = doc.getElementById('profile-current-label');
+        const dashboard = doc.getElementById('dashboard-wrap');
+        const adminActive = !!label && /Administrador/i.test(label.textContent || '') && (!dashboard || dashboard.style.display !== 'none');
+        controls.style.display = adminActive ? 'flex' : 'none';
+      }
+
+      doc.addEventListener('click', function(){ setTimeout(refreshAdminMode, 0); }, true);
+
+      const label = doc.getElementById('profile-current-label');
+      if(label){
+        new MutationObserver(refreshAdminMode).observe(label, {childList:true,subtree:true,characterData:true});
+      }
+
+      refreshAdminMode();
+      setTimeout(refreshAdminMode, 250);
+    }
+
     async function boot(){
       const loader = document.getElementById('loader');
       const frame = document.getElementById('board');
@@ -87,15 +160,14 @@
 
         const storageAdapter = `\n<script>\nwindow.storage = {\n  get: function(key, shared){ return parent.__nogasaStorageRpc('get', key, null, !!shared); },\n  set: function(key, value, shared){ return parent.__nogasaStorageRpc('set', key, value, !!shared); }\n};\n<\/script>\n`;
 
-        const cloudControls = `\n<style>\n#nogasa-cloud-save{position:fixed;right:18px;bottom:18px;z-index:9999;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #dfe3ea;border-radius:10px;padding:8px 10px;box-shadow:0 10px 28px rgba(28,43,74,.18)}\n#nogasa-cloud-save button{border:0;border-radius:7px;background:#1f5fa8;color:#fff;padding:9px 13px;font-weight:800;cursor:pointer}\n#nogasa-cloud-save span{font-size:12px;color:#6b7688;font-weight:700}\n<\/style>\n<div id="nogasa-cloud-save"><button id="nogasa-save-now" type="button">Guardar cambios</button><span id="nogasa-save-state">Guardado compartido</span></div>\n<script>\n(function(){\n  function setupCloudControls(){\n    var admin = document.querySelector('.profile-option-btn.is-admin');\n    if(admin) admin.textContent = 'Modo edición — Administrador';\n    var btn = document.getElementById('nogasa-save-now');\n    var state = document.getElementById('nogasa-save-state');\n    if(!btn) return;\n    btn.addEventListener('click', async function(){\n      btn.disabled = true; state.textContent = 'Guardando…';\n      try{\n        if(typeof persist !== 'function') throw new Error('El tablero todavía no terminó de cargar');\n        await persist();\n        state.textContent = 'Guardado';\n        setTimeout(function(){ state.textContent = 'Guardado compartido'; }, 1800);\n      }catch(error){\n        console.error(error);\n        state.textContent = 'No se pudo guardar';\n      }finally{ btn.disabled = false; }\n    });\n  }\n  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupCloudControls);\n  else setupCloudControls();\n})();\n<\/script>\n`;
-
         html = html.replace('<head>', '<head>\n<base href="/">' + storageAdapter);
-        html = html.replace('</body>', cloudControls + '\n</body>');
 
         frame.addEventListener('load', function(){
           loader.style.display = 'none';
           frame.classList.add('ready');
+          installAdminControls(frame);
         }, { once:true });
+
         frame.srcdoc = html;
       }catch(error){
         console.error(error);
